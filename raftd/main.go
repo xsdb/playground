@@ -1,9 +1,10 @@
 package main
 
 import (
-	"github.com/xsdb/playground/raftd/partition"
+	"github.com/xsdb/playground/raftd/server"
 )
 
 func main() {
-	partition := partition.NewPartition()
+	server, _ := server.NewServer()
+	server.Start()
 }
