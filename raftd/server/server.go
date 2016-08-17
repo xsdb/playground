@@ -1,45 +1,56 @@
 package server
 
 import (
-	"github.com/hashicorp/memberlist"
 	"github.com/xsdb/playground/raftd/partition"
+	"github.com/xsdb/playground/raftd/xsmember"
 )
 
 type Server struct {
-	p    *partition.Partition
-	list *memberlist.Memberlist
+	p        *partition.Partition
+	xsmember *xsmember.Xsmember
+	eventCh  chan *xsmember.Event
 }
 
 func NewServer() (*Server, error) {
 	s := &Server{}
 
-	s.list = s.setupMemberlist()
+	s.setupXsmember()
 
 	s.p, _ = partition.NewPartition()
 
 	return s, nil
 }
 
-func (s *Server) setupMemberlist() *memberlist.Memberlist {
-	conf := memberlist.DefaultLocalConfig()
+func (s *Server) setupXsmember() {
+	s.eventCh = make(chan *xsmember.Event, 256)
 
-	conf.Events = &eventDelegate{server: s}
+	conf := &xsmember.Config{eventCh: s.eventCh}
 
-	list, err := memberlist.Create(conf)
+	xsmember, err := xsmember.NewXsmember(s.conf)
 	if err != nil {
-		panic("Failed to create memberlist: " + err.Error())
+		log.Printf("xsmember create fail. %v", err)
 	}
 
-	return list
+	s.xsmember = xsmember
+
+	go s.xsMemberEventLoop()
 }
 
-func (s *Server) handleNodeJoin(n *memberlist.Node) {
+func (s *Server) xsMemberEventLoop() {
+	for {
+		select {
+		case e := <-s.eventCh:
+			s.handleMemberEvent(e)
+		}
+	}
 }
 
-func (s *Server) handleNodeLeave(n *memberlist.Node) {
-}
-
-func (s *Server) handleNodeUpdate(n *memberlist.Node) {
+func (s *Server) handleMemberEvent(e *xsmember.Event) {
+	switch e.Type() {
+	case xsmember.TypeJoin:
+	case xsmember.TypeLeave:
+	case xsmember.TypeUpdate:
+	}
 }
 
 func (s *Server) Start() {
