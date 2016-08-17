@@ -2,6 +2,7 @@ package xsmember
 
 import (
 	"github.com/hashicorp/memberlist"
+	"net"
 )
 
 type eventDelegate struct {

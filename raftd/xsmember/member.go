@@ -72,6 +72,10 @@ func NewXsmember(conf *Config) (*Xsmember, error) {
 	return xsmember, nil
 }
 
+func NewConfig(c chan *Event) *Config {
+	return &Config{eventCh: c}
+}
+
 func (xsmember *Xsmember) decodeTags(meta []byte) map[string]string {
 	m := make(map[string]string)
 
