@@ -1,6 +1,7 @@
 package xsmember
 
 import (
+	"log"
 	"net"
 
 	"github.com/hashicorp/memberlist"
@@ -55,11 +56,14 @@ type Config struct {
 	eventCh        chan *Event
 }
 
-func NewXsmember(conf *Config) (*Xsmember, error) {
+func NewXsmember(conf *Config, name string, port int) (*Xsmember, error) {
 	xsmember := &Xsmember{
 		conf: conf}
 
 	conf.memberlistConf = memberlist.DefaultLocalConfig()
+	conf.memberlistConf.Name = name
+	conf.memberlistConf.BindPort = port
+	conf.memberlistConf.AdvertisePort = port
 	conf.memberlistConf.Events = &eventDelegate{xsmember: xsmember}
 
 	list, err := memberlist.Create(conf.memberlistConf)
@@ -70,6 +74,17 @@ func NewXsmember(conf *Config) (*Xsmember, error) {
 	xsmember.list = list
 
 	return xsmember, nil
+}
+
+func (xsmember *Xsmember) Join(addrs []string) (int, error) {
+	n, err := xsmember.list.Join(addrs)
+
+	// Ask for members of the cluster
+	for _, member := range xsmember.list.Members() {
+		log.Printf("Member: %s %s\n", member.Name, member.Addr)
+	}
+
+	return n, err
 }
 
 func NewConfig(c chan *Event) *Config {

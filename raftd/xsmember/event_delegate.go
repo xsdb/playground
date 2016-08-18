@@ -1,8 +1,10 @@
 package xsmember
 
 import (
-	"github.com/hashicorp/memberlist"
+	"log"
 	"net"
+
+	"github.com/hashicorp/memberlist"
 )
 
 type eventDelegate struct {
@@ -10,7 +12,11 @@ type eventDelegate struct {
 }
 
 func (e *eventDelegate) NotifyJoin(n *memberlist.Node) {
+	log.Printf("Notify Join %v", n)
+
 	m := e.nodeToMember(n)
+	log.Printf("member %v", m)
+
 	e.xsmember.handleMemberJoin(m)
 }
 

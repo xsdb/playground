@@ -1,6 +1,7 @@
 package partition
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -12,7 +13,7 @@ import (
 )
 
 const (
-	bindAddr = "0.0.0.0"
+	bindAddr = ":50053"
 	maxPool  = 128
 	timeout  = time.Second * 3
 )
@@ -31,8 +32,8 @@ type Partition struct {
 	raft *raft.Raft
 }
 
-func NewPartition() (*Partition, error) {
-	advertise, err := net.ResolveTCPAddr("tcp", bindAddr)
+func NewPartition(port int) (*Partition, error) {
+	advertise, err := net.ResolveTCPAddr("tcp", fmt.Sprintf(":%v", port))
 	if err != nil {
 		return nil, err
 	}
@@ -47,13 +48,13 @@ func NewPartition() (*Partition, error) {
 
 	fsm := &PartitionFSM{}
 
-	logs, err := raftboltdb.NewBoltStore("/tmp/boltdb")
+	logs, err := raftboltdb.NewBoltStore("./tmp/boltdb")
 	if err != nil {
 		return nil, err
 	}
 
 	logger = log.New(os.Stdout, "[snapshot]", log.LstdFlags)
-	snaps, err := raft.NewFileSnapshotStoreWithLogger("/tmp", 1, logger)
+	snaps, err := raft.NewFileSnapshotStoreWithLogger("./tmp", 1, logger)
 	if err != nil {
 		return nil, err
 	}
