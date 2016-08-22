@@ -45,20 +45,17 @@ const (
 	TypeJoin
 )
 
-func NewPartitionManager(leader string, port int, dir string,
-	eventCh chan *Event) (*PartitionManager, error) {
+func NewPartitionManager(leader string, port int, dir string, eventCh chan *Event) (*PartitionManager, error) {
 
+	log.Printf("[PM] new transport: %v", port)
 	bindAddr := fmt.Sprintf(":%v", port)
-	log.Printf("[PM] bind %v...\n", bindAddr)
 	advertise, err := net.ResolveTCPAddr("tcp", bindAddr)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Printf("[PM] new transport")
 	logger := log.New(os.Stdout, "[transport]", log.LstdFlags)
-	trans, err := raft.NewTCPTransportWithLogger(bindAddr, advertise,
-		maxPool, timeout, logger)
+	trans, err := raft.NewTCPTransportWithLogger(bindAddr, advertise, maxPool, timeout, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -121,28 +118,45 @@ func (ps *PartitionManagerPeerStore) SetPeers([]string) error {
 	return nil
 }
 
-func (pm *PartitionManager) AddPeer(m *xsmember.Member) error {
-	log.Printf("[PM] add peer %v\n", m)
+func (pm *PartitionManager) AddPeer(addr string) error {
+	log.Printf("[PM] add peer %v\n", addr)
 
-	future := pm.raft.AddPeer(m.Addr.String())
+	future := pm.raft.AddPeer(addr)
 	if err := future.Error(); err != nil && err != raft.ErrKnownPeer {
 		log.Printf("[ERR] [PartitionManager] failed to add raft peer: %v", err)
 		return err
 	} else if err == nil {
-		log.Printf("[INFO] [PartitionManager] added raft peer: %v", m)
+		log.Printf("[INFO] [PartitionManager] added raft peer: %v", addr)
 	}
 	return nil
 }
 
-func (pm *PartitionManager) LeavePeer(m *xsmember.Member) error {
-	future := pm.raft.RemovePeer(m.Addr.String())
+func (pm *PartitionManager) LeavePeer(addr string) error {
+	log.Printf("[PM] leave peer %v\n", addr)
+
+	future := pm.raft.RemovePeer(addr)
 	if err := future.Error(); err != nil && err != raft.ErrKnownPeer {
 		log.Printf("[ERR] [PartitionManager] failed to remove raft peer: %v", err)
 		return err
 	} else if err == nil {
-		log.Printf("[INFO] [PartitionManager] removed raft peer: %v", m)
+		log.Printf("[INFO] [PartitionManager] removed raft peer: %v", addr)
 	}
 	return nil
+}
+
+func (pm *PartitionManager) UpdatePeer(m *xsmember.Member) error {
+	var err error
+
+	switch m.Tags["Func"] {
+	case "AddPeer":
+		addr := fmt.Sprintf("%v:%v", m.Addr.String(), m.Tags["Port"])
+		err = pm.AddPeer(addr)
+	case "LeavePeer":
+		addr := fmt.Sprintf("%v:%v", m.Addr.String(), m.Tags["Port"])
+		err = pm.LeavePeer(addr)
+	}
+
+	return err
 }
 
 func (e *Event) Type() EventType {

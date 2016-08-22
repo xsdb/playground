@@ -1,8 +1,10 @@
 package xsmember
 
 import (
+	"encoding/json"
 	"log"
 	"net"
+	"time"
 
 	"github.com/hashicorp/memberlist"
 )
@@ -54,6 +56,7 @@ const (
 type Config struct {
 	memberlistConf *memberlist.Config
 	eventCh        chan *Event
+	Tags           map[string]string
 }
 
 func NewXsmember(conf *Config, name string, port int) (*Xsmember, error) {
@@ -65,6 +68,7 @@ func NewXsmember(conf *Config, name string, port int) (*Xsmember, error) {
 	conf.memberlistConf.BindPort = port
 	conf.memberlistConf.AdvertisePort = port
 	conf.memberlistConf.Events = &eventDelegate{xsmember: xsmember}
+	conf.memberlistConf.Delegate = &delegate{xsmember: xsmember}
 
 	list, err := memberlist.Create(conf.memberlistConf)
 	if err != nil {
@@ -81,10 +85,21 @@ func (xsmember *Xsmember) Join(addrs []string) (int, error) {
 
 	// Ask for members of the cluster
 	for _, member := range xsmember.list.Members() {
-		log.Printf("Member: %s %s\n", member.Name, member.Addr)
+		log.Printf("[Xsmember] member: %s %s\n", member.Name, member.Addr)
 	}
 
 	return n, err
+}
+
+func (xsmember *Xsmember) Update(tags map[string]string) error {
+	xsmember.conf.Tags = tags
+
+	err := xsmember.list.UpdateNode(500 * time.Millisecond)
+	if err != nil {
+		log.Printf("[Xsmember] update fail %v", err)
+	}
+
+	return err
 }
 
 func NewConfig(c chan *Event) *Config {
@@ -92,15 +107,23 @@ func NewConfig(c chan *Event) *Config {
 }
 
 func (xsmember *Xsmember) decodeTags(meta []byte) map[string]string {
-	m := make(map[string]string)
+	var tags map[string]string
 
-	return m
+	err := json.Unmarshal(meta, &tags)
+	if err != nil {
+		log.Printf("[Xsmember] decodeTags: %v", err)
+	}
+
+	return tags
 }
 
 func (xsmember *Xsmember) encodeTags(tags map[string]string) []byte {
-	b := make([]byte, 8)
+	meta, err := json.Marshal(tags)
+	if err != nil {
+		log.Printf("[Xsmember] encodeTags: %v", err)
+	}
 
-	return b
+	return meta
 }
 
 func (xsmember *Xsmember) handleMemberJoin(m *Member) {

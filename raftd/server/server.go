@@ -13,10 +13,17 @@ import (
 	"google.golang.org/grpc"
 )
 
+type Config struct {
+	Clientport  int
+	Memberport  int
+	Partmapport int
+	Dir         string
+	Name        string
+	Leader      string
+}
+
 type Server struct {
-	port int
-	dir  string
-	name string
+	conf *Config
 
 	p *partition.Partition
 	/* for cluster member manage */
@@ -36,17 +43,17 @@ type Server struct {
 	partEventCh chan *partitionManager.Event
 }
 
-func NewServer(leader string, port int, dir string, name string) (*Server, error) {
-	s := &Server{port: port, dir: dir, name: name}
+func NewServer(conf *Config) (*Server, error) {
+	s := &Server{conf: conf}
 
 	log.Printf("setup PartitionManager\n")
-	err := s.setupPartitionManager(leader, port+1)
+	err := s.setupPartitionManager()
 	if err != nil {
 		return nil, err
 	}
 
 	log.Printf("setup xsmember\n")
-	err = s.setupXsmember(leader, port+2)
+	err = s.setupXsmember()
 	if err != nil {
 		return nil, err
 	}
@@ -65,12 +72,14 @@ func NewServer(leader string, port int, dir string, name string) (*Server, error
 	return s, nil
 }
 
-func (s *Server) setupPartitionManager(leader string, port int) error {
+func (s *Server) setupPartitionManager() error {
 	var err error
 
 	s.partEventCh = make(chan *partitionManager.Event, 256)
-	s.pm, err = partitionManager.NewPartitionManager(leader, port,
-		s.dir, s.partEventCh)
+	s.pm, err = partitionManager.NewPartitionManager(s.conf.Leader,
+		s.conf.Partmapport,
+		s.conf.Dir,
+		s.partEventCh)
 	if err != nil {
 		log.Printf("setup partition manager fail %v", err)
 		return err
@@ -79,24 +88,33 @@ func (s *Server) setupPartitionManager(leader string, port int) error {
 	return nil
 }
 
-func (s *Server) setupXsmember(leader string, port int) error {
+func (s *Server) setupXsmember() error {
 	var err error
 
 	s.eventCh = make(chan *xsmember.Event, 256)
 	conf := xsmember.NewConfig(s.eventCh)
 
-	s.xsmember, err = xsmember.NewXsmember(conf, s.name, port)
+	s.xsmember, err = xsmember.NewXsmember(conf, s.conf.Name, s.conf.Memberport)
 	if err != nil {
 		log.Printf("setup xsmember fail %v", err)
 		return err
 	}
 
-	if leader != "" {
-		_, err := s.xsmember.Join([]string{leader})
+	if s.conf.Leader != "" {
+		/* Join Memberlist */
+		_, err := s.xsmember.Join([]string{s.conf.Leader})
 		if err != nil {
 			log.Printf("Failed to join cluster: %v", err)
 			return err
 		}
+
+		/* Send PartitionMap AddPeer Req */
+		m := make(map[string]string)
+
+		m["Func"] = "AddPeer"
+		m["Port"] = fmt.Sprintf("%v", s.conf.Partmapport)
+
+		s.xsmember.Update(m)
 	}
 
 	return nil
@@ -119,11 +137,9 @@ func (s *Server) handleMemberEvent(e *xsmember.Event) {
 	log.Printf("recv member Event %v, %v\n", e.Type(), e.Member())
 	switch e.Type() {
 	case xsmember.TypeJoin:
-		s.pm.AddPeer(e.Member())
 	case xsmember.TypeLeave:
-		s.pm.LeavePeer(e.Member())
 	case xsmember.TypeUpdate:
-		//s.pm.UpdatePeer(e.Member())
+		s.pm.UpdatePeer(e.Member())
 	}
 }
 
@@ -144,7 +160,7 @@ func (s *Server) Put(ctx context.Context, in *xsproto.Request) (*xsproto.Respons
 }
 
 func (s *Server) Start() {
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%v", s.port))
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%v", s.conf.Clientport))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}

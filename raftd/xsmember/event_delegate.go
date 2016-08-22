@@ -15,17 +15,19 @@ func (e *eventDelegate) NotifyJoin(n *memberlist.Node) {
 	log.Printf("Notify Join %v", n)
 
 	m := e.nodeToMember(n)
-	log.Printf("member %v", m)
-
 	e.xsmember.handleMemberJoin(m)
 }
 
 func (e *eventDelegate) NotifyLeave(n *memberlist.Node) {
+	log.Printf("Notify Leave %v", n)
+
 	m := e.nodeToMember(n)
 	e.xsmember.handleMemberLeave(m)
 }
 
 func (e *eventDelegate) NotifyUpdate(n *memberlist.Node) {
+	log.Printf("Notify Update %v", n)
+
 	m := e.nodeToMember(n)
 	e.xsmember.handleMemberUpdate(m)
 }
