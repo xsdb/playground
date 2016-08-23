@@ -10,8 +10,9 @@ import (
 )
 
 type Xsmember struct {
-	list *memberlist.Memberlist
-	conf *Config
+	list       *memberlist.Memberlist
+	broadcasts *memberlist.TransmitLimitedQueue
+	conf       *Config
 }
 
 type Member struct {
@@ -56,6 +57,7 @@ const (
 type Config struct {
 	memberlistConf *memberlist.Config
 	eventCh        chan *Event
+	msgCh          chan *Message
 	Tags           map[string]string
 }
 
@@ -74,8 +76,14 @@ func NewXsmember(conf *Config, name string, port int) (*Xsmember, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	xsmember.list = list
+
+	xsmember.broadcasts = &memberlist.TransmitLimitedQueue{
+		NumNodes: func() int {
+			return xsmember.list.NumMembers()
+		},
+		RetransmitMult: conf.memberlistConf.RetransmitMult,
+	}
 
 	return xsmember, nil
 }
@@ -102,8 +110,15 @@ func (xsmember *Xsmember) Update(tags map[string]string) error {
 	return err
 }
 
-func NewConfig(c chan *Event) *Config {
-	return &Config{eventCh: c}
+func (xsmember *Xsmember) Broadcast(t msgType, msg interface{}) {
+	buf, _ := encodeMessage(t, msg)
+	log.Printf("%v", buf)
+	b := broadcast{msg: buf}
+	xsmember.broadcasts.QueueBroadcast(b)
+}
+
+func NewConfig(eventCh chan *Event, msgCh chan *Message) *Config {
+	return &Config{eventCh: eventCh, msgCh: msgCh}
 }
 
 func (xsmember *Xsmember) decodeTags(meta []byte) map[string]string {

@@ -2,6 +2,7 @@ package xsmember
 
 import (
 	"fmt"
+	"log"
 )
 
 type delegate struct {
@@ -17,13 +18,30 @@ func (d *delegate) NodeMeta(limit int) []byte {
 	return bytes
 }
 
-func (d *delegate) NotifyMsg([]byte) {
+func (d *delegate) NotifyMsg(in []byte) {
+	if len(in) == 0 {
+		return
+	}
+
+	log.Printf("NotifyMsg %v", in)
+
+	t := msgType(in[0])
+	switch t {
+	case MsgTypeAddPeer:
+		addPeerMsg := &MsgAddPeer{}
+		decodeMessage(in[1:], addPeerMsg)
+
+		log.Printf("AddPeer %v, %v", addPeerMsg.Addr, addPeerMsg.Port)
+
+		msg := &Message{Type: t, Body: addPeerMsg}
+		d.xsmember.conf.msgCh <- msg
+	}
 }
 
 func (d *delegate) GetBroadcasts(overhead, limit int) [][]byte {
-	buf := make([][]byte, 1)
+	msgs := d.xsmember.broadcasts.GetBroadcasts(overhead, limit)
 
-	return buf
+	return msgs
 }
 
 func (d *delegate) LocalState(join bool) []byte {

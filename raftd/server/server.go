@@ -6,7 +6,7 @@ import (
 	"net"
 
 	"github.com/xsdb/playground/raftd/partition"
-	"github.com/xsdb/playground/raftd/partitionManager"
+	"github.com/xsdb/playground/raftd/partitionMap"
 	"github.com/xsdb/playground/raftd/xsmember"
 	"github.com/xsdb/playground/raftd/xsproto"
 	"golang.org/x/net/context"
@@ -32,15 +32,18 @@ type Server struct {
 	/* for recv cluster member event */
 	eventCh chan *xsmember.Event
 
+	/* for recv cluster Msg*/
+	msgCh chan *xsmember.Message
+
 	/* for partition manage
 	 * partition join, leave, merge, split 등은
-	 * partitionManager leader 에 의해 정해진다.
-	 * follower는 partitionManagerFsm 에 의해 판단한다. */
-	pm *partitionManager.PartitionManager
+	 * partitionMap leader 에 의해 정해진다.
+	 * follower는 partitionMapFsm 에 의해 판단한다. */
+	pm *partitionMap.PartitionMap
 
-	/* partitionManager 에 의해 결정된 Event를
+	/* partitionMap 에 의해 결정된 Event를
 	 * partition 에 적용하기 위한 용도. */
-	partEventCh chan *partitionManager.Event
+	partEventCh chan *partitionMap.Event
 }
 
 func NewServer(conf *Config) (*Server, error) {
@@ -75,8 +78,8 @@ func NewServer(conf *Config) (*Server, error) {
 func (s *Server) setupPartitionManager() error {
 	var err error
 
-	s.partEventCh = make(chan *partitionManager.Event, 256)
-	s.pm, err = partitionManager.NewPartitionManager(s.conf.Leader,
+	s.partEventCh = make(chan *partitionMap.Event, 256)
+	s.pm, err = partitionMap.NewPartitionMap(s.conf.Leader,
 		s.conf.Partmapport,
 		s.conf.Dir,
 		s.partEventCh)
@@ -92,7 +95,8 @@ func (s *Server) setupXsmember() error {
 	var err error
 
 	s.eventCh = make(chan *xsmember.Event, 256)
-	conf := xsmember.NewConfig(s.eventCh)
+	s.msgCh = make(chan *xsmember.Message, 256)
+	conf := xsmember.NewConfig(s.eventCh, s.msgCh)
 
 	s.xsmember, err = xsmember.NewXsmember(conf, s.conf.Name, s.conf.Memberport)
 	if err != nil {
@@ -108,13 +112,10 @@ func (s *Server) setupXsmember() error {
 			return err
 		}
 
-		/* Send PartitionMap AddPeer Req */
-		m := make(map[string]string)
-
-		m["Func"] = "AddPeer"
-		m["Port"] = fmt.Sprintf("%v", s.conf.Partmapport)
-
-		s.xsmember.Update(m)
+		/* Broadcast PartitionMap AddPeer Req */
+		m := &xsmember.MsgAddPeer{Addr: "localhost",
+			Port: s.conf.Partmapport}
+		s.xsmember.Broadcast(xsmember.MsgTypeAddPeer, m)
 	}
 
 	return nil
@@ -126,28 +127,33 @@ func (s *Server) eventLoop() {
 		case e := <-s.eventCh:
 			s.handleMemberEvent(e)
 		case e := <-s.partEventCh:
-			s.handlePartitionManageEvent(e)
+			s.handlePartitionMapEvent(e)
+		case m := <-s.msgCh:
+			s.handleMessage(m)
 		}
 	}
 }
 
-/* xsmemeber로 부터 받은 event를
- * partitionManager 에 전달*/
 func (s *Server) handleMemberEvent(e *xsmember.Event) {
 	log.Printf("recv member Event %v, %v\n", e.Type(), e.Member())
 	switch e.Type() {
 	case xsmember.TypeJoin:
 	case xsmember.TypeLeave:
 	case xsmember.TypeUpdate:
-		s.pm.UpdatePeer(e.Member())
 	}
 }
 
-/* partitionManager 로 부터 partiotn 할당, 삭제,
- * 또는 memge, split 명령을 받는다. */
-func (s *Server) handlePartitionManageEvent(e *partitionManager.Event) {
+func (s *Server) handleMessage(m *xsmember.Message) {
+	switch m.Type {
+	case xsmember.MsgTypeAddPeer:
+		msg := m.Body.(*xsmember.MsgAddPeer)
+		s.pm.AddPeer(fmt.Sprintf("%v:%v", msg.Addr, msg.Port))
+	}
+}
+
+func (s *Server) handlePartitionMapEvent(e *partitionMap.Event) {
 	switch e.Type() {
-	case partitionManager.TypeJoin:
+	case partitionMap.TypeJoin:
 	}
 }
 
