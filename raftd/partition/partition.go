@@ -13,9 +13,8 @@ import (
 )
 
 const (
-	bindAddr = ":50053"
-	maxPool  = 128
-	timeout  = time.Second * 3
+	maxPool = 128
+	timeout = time.Second * 3
 )
 
 type LogCommitResult struct {
@@ -32,8 +31,11 @@ type Partition struct {
 	raft *raft.Raft
 }
 
-func NewPartition(port int) (*Partition, error) {
-	advertise, err := net.ResolveTCPAddr("tcp", fmt.Sprintf(":%v", port))
+func NewPartition(path string, port string) (*Partition, error) {
+	os.MkdirAll(path, 0766)
+
+	bindAddr := fmt.Sprintf(":%v", port)
+	advertise, err := net.ResolveTCPAddr("tcp", bindAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -48,13 +50,13 @@ func NewPartition(port int) (*Partition, error) {
 
 	fsm := &PartitionFSM{}
 
-	logs, err := raftboltdb.NewBoltStore("./tmp/boltdb")
+	logs, err := raftboltdb.NewBoltStore(path + "/boltdb")
 	if err != nil {
 		return nil, err
 	}
 
 	logger = log.New(os.Stdout, "[snapshot]", log.LstdFlags)
-	snaps, err := raft.NewFileSnapshotStoreWithLogger("./tmp", 1, logger)
+	snaps, err := raft.NewFileSnapshotStoreWithLogger(path, 1, logger)
 	if err != nil {
 		return nil, err
 	}

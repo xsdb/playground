@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 
+	"github.com/hashicorp/raft"
+	"github.com/syndtr/goleveldb/leveldb/util"
 	"github.com/xsdb/playground/raftd/partition"
 	"github.com/xsdb/playground/raftd/partitionMap"
 	"github.com/xsdb/playground/raftd/xsmember"
@@ -25,7 +28,6 @@ type Config struct {
 type Server struct {
 	conf *Config
 
-	p *partition.Partition
 	/* for cluster member manage */
 	xsmember *xsmember.Xsmember
 
@@ -44,13 +46,22 @@ type Server struct {
 	/* partitionMap 에 의해 결정된 Event를
 	 * partition 에 적용하기 위한 용도. */
 	partEventCh chan *partitionMap.Event
+
+	/* local partition map */
+	localPartitionMap map[string]*partition.Partition
 }
 
 func NewServer(conf *Config) (*Server, error) {
 	s := &Server{conf: conf}
 
+	s.localPartitionMap = make(map[string]*partition.Partition)
 	log.Printf("setup PartitionManager\n")
 	err := s.setupPartitionManager()
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.setupPartition()
 	if err != nil {
 		return nil, err
 	}
@@ -61,16 +72,31 @@ func NewServer(conf *Config) (*Server, error) {
 		return nil, err
 	}
 
-	log.Printf("run eventLoop\n")
 	go s.eventLoop()
 
-	/*
-		log.Printf("create partition\n")
-		s.p, err = partition.NewPartition(port + 2)
+	if s.conf.Leader != "" {
+		/* Join Memberlist */
+		_, err := s.xsmember.Join([]string{s.conf.Leader})
 		if err != nil {
-			return nil, err
+			log.Printf("Failed to join cluster: %v", err)
+		} else {
+			/* Broadcast PartitionMap AddPeer Req */
+			m := &xsmember.MsgAddPeer{Name: conf.Name,
+				Addr: "localhost",
+				Dir:  conf.Dir,
+				Port: s.conf.Partmapport}
+			s.xsmember.Broadcast(xsmember.MsgTypeAddPeer, m)
 		}
-	*/
+
+		/* wait follower state */
+		s.pm.WaitState(raft.Follower)
+	} else {
+		/* wait leader state */
+		s.pm.WaitState(raft.Leader)
+
+		s.pm.InitPartitionTable()
+		s.pm.RegisterNode(conf.Name, "localhost", s.conf.Partmapport, s.conf.Dir)
+	}
 
 	return s, nil
 }
@@ -104,21 +130,65 @@ func (s *Server) setupXsmember() error {
 		return err
 	}
 
-	if s.conf.Leader != "" {
-		/* Join Memberlist */
-		_, err := s.xsmember.Join([]string{s.conf.Leader})
-		if err != nil {
-			log.Printf("Failed to join cluster: %v", err)
-			return err
+	return nil
+}
+
+func (s *Server) setupPartition() error {
+	nid, err := s.pm.Get([]byte(fmt.Sprintf("/node/%v", s.conf.Name)))
+	if err != nil {
+		return nil
+	}
+	log.Printf("nodeID:%v", string(nid))
+
+	iter := s.pm.NewIterator(util.BytesPrefix([]byte("/partition/")), nil)
+	for iter.Next() {
+		key := iter.Key()
+		columns := strings.Split(string(key), "/")
+
+		if len(columns) != 4 {
+			continue
 		}
 
-		/* Broadcast PartitionMap AddPeer Req */
-		m := &xsmember.MsgAddPeer{Addr: "localhost",
-			Port: s.conf.Partmapport}
-		s.xsmember.Broadcast(xsmember.MsgTypeAddPeer, m)
-	}
+		if columns[3] != "node" {
+			continue
+		}
 
-	return nil
+		value := iter.Value()
+		if string(nid) != string(value) {
+			continue
+		}
+
+		pid := string(columns[2])
+		if _, ok := s.localPartitionMap[pid]; ok == true {
+			log.Printf("pid[%v] exist", pid)
+			continue
+		}
+
+		path, err := s.pm.Get([]byte(fmt.Sprintf("/partition/%v/path", pid)))
+		if err != nil {
+			break
+		}
+		log.Printf("path : %v", string(path))
+
+		port, err := s.pm.Get([]byte(fmt.Sprintf("/partition/%v/port", pid)))
+		if err != nil {
+			break
+		}
+		log.Printf("port : %v", string(port))
+
+		p, err := partition.NewPartition(string(path), string(port))
+		if err != nil {
+			log.Printf("Partition create fail %v", err)
+			break
+		}
+		log.Printf("NewPartition %v %v", path, port)
+
+		s.localPartitionMap[pid] = p
+	}
+	iter.Release()
+	err = iter.Error()
+
+	return err
 }
 
 func (s *Server) eventLoop() {
@@ -126,10 +196,10 @@ func (s *Server) eventLoop() {
 		select {
 		case e := <-s.eventCh:
 			s.handleMemberEvent(e)
-		case e := <-s.partEventCh:
-			s.handlePartitionMapEvent(e)
 		case m := <-s.msgCh:
 			s.handleMessage(m)
+		case e := <-s.partEventCh:
+			s.handlePartitionMapEvent(e)
 		}
 	}
 }
@@ -147,14 +217,12 @@ func (s *Server) handleMessage(m *xsmember.Message) {
 	switch m.Type {
 	case xsmember.MsgTypeAddPeer:
 		msg := m.Body.(*xsmember.MsgAddPeer)
-		s.pm.AddPeer(fmt.Sprintf("%v:%v", msg.Addr, msg.Port))
+		s.pm.AddPeer(msg.Name, msg.Addr, msg.Port, msg.Dir)
 	}
 }
 
 func (s *Server) handlePartitionMapEvent(e *partitionMap.Event) {
-	switch e.Type() {
-	case partitionMap.TypeJoin:
-	}
+	s.setupPartition()
 }
 
 func (s *Server) Get(ctx context.Context, in *xsproto.Request) (*xsproto.Response, error) {

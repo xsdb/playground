@@ -6,7 +6,9 @@ import (
 )
 
 type MsgAddPeer struct {
+	Name string
 	Addr string
+	Dir  string
 	Port int
 }
 
